@@ -26,6 +26,4 @@ The model settings can be changed in `.env`. Parsing, embeddings, and text gener
 
 Secrets, uploaded resumes, generated application data, personal photos, Python caches, and virtual environments are excluded from the repository.
 
-## Current limitations
 
-This initial import preserves the existing implementation. Review findings remain open: tailored exports omit structured identity/education fields; improvements overwrite the selected resume; storage errors can appear as empty data; DOCX table extraction is incomplete; match previews can become stale; and tracker fields cannot always be cleared. Review generated documents before use and back up local data.
