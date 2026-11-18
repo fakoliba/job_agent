@@ -1,6 +1,6 @@
 # AI-Powered Job Search Agent
 
-A Streamlit workspace backed by a FastAPI service and PostgreSQL. FastAPI owns authentication, durable account data, resume parsing, role matching, job discovery, monitor runs, drafting, interview prep, and career insights. Streamlit renders the UI and calls the authenticated API.
+ workspace backed by a FastAPI service and PostgreSQL. FastAPI owns authentication, durable account data, resume parsing, role matching, job discovery, monitor runs, drafting, interview prep, and career insights. Streamlit renders the UI and calls the authenticated API.
 
 ## Features
 
