@@ -1,1 +1,1 @@
-"""Job agent core modules."""
+"""Core modules for the Job Search Agent."""

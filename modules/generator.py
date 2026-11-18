@@ -1,156 +1,149 @@
 from __future__ import annotations
 
-import json
+import os
+from dataclasses import dataclass
 
 from openai import OpenAI
 
-from modules.schemas import Job, StructuredResume
+
+@dataclass
+class DraftRequest:
+    resume: dict
+    job_description: str
+    company: str = ""
+    role_title: str = ""
 
 
-def match_narrative(
-    client: OpenAI,
-    model: str,
-    resume: StructuredResume,
-    job: Job,
-    score_10: int,
-) -> str:
-    prompt = f"""You are a career coach. The candidate's resume vs this job has an internal match strength
-of about {score_10}/10 (on a 0-10 scale).
-
-Write exactly 1 or 2 short paragraphs (no bullets, no JSON):
-- If it's a strong fit, say why (concrete overlaps with the JD).
-- If it's a weak or mixed fit, say what's missing or risky and what still transfers.
-
-JOB: {job.title} at {job.company}
-JOB DESCRIPTION (excerpt): {job.description[:6000]}
-
-RESUME SUMMARY: {resume.summary}
-KEY SKILLS (sample): {", ".join(resume.skills[:20])}
-"""
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
+def generate_resume_bullets(request: DraftRequest) -> str:
+    return generate_with_llm(
+        request,
+        task=(
+            "Create 6 tailored resume bullets for this role. Use concise, metric-oriented, recruiter-quality wording. "
+            "Do not fabricate metrics; mark likely placeholders in brackets."
+        ),
+        fallback=fallback_resume_bullets,
     )
-    return (resp.choices[0].message.content or "").strip()
 
 
-def resume_improve_for_job(
-    client: OpenAI, model: str, resume: StructuredResume, job: Job
-) -> StructuredResume:
-    """Rewrite structured resume to better align with the JD; facts must stay plausible."""
-    prompt = f"""Improve this resume for the target job. Return JSON only with keys:
-summary (string), experience (array of strings), skills (array of strings),
-impact (array of strings), leadership (array of strings).
-Reword and reorder for relevance; do not invent employers or dates not implied by the source.
-
-SOURCE_RESUME_JSON:
-{resume.model_dump_json()}
-
-JOB:
-{job.title} at {job.company}
-{job.description}
-"""
-    resp = client.chat.completions.create(
-        model=model,
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}],
+def generate_why_company(request: DraftRequest) -> str:
+    return generate_with_llm(
+        request,
+        task="Write a crisp 'Why this company?' answer in first person, grounded in the role and candidate background.",
+        fallback=fallback_why_company,
     )
-    content = resp.choices[0].message.content or "{}"
-    return StructuredResume.model_validate(json.loads(content))
 
 
-def tailored_resume_structured(
-    client: OpenAI, model: str, resume: StructuredResume, job: Job
-) -> StructuredResume:
-    raw = tailored_resume_document(client, model, resume, job)
-    return StructuredResume.model_validate(json.loads(raw))
-
-
-def tailored_bullets(
-    client: OpenAI, model: str, resume: StructuredResume, job: Job
-) -> str:
-    payload = resume.model_dump_json(indent=2)
-    prompt = f"""Given this structured resume JSON and the job description, return 5-8 tailored resume bullets
-(star format, past tense) most relevant to this role. One bullet per line, no numbering.
-
-RESUME_JSON:
-{payload}
-
-JOB_TITLE: {job.title}
-COMPANY: {job.company}
-JOB_DESCRIPTION:
-{job.description}
-"""
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
+def generate_outreach(request: DraftRequest) -> str:
+    return generate_with_llm(
+        request,
+        task="Write a concise recruiter outreach message under 120 words with a clear value proposition and soft CTA.",
+        fallback=fallback_outreach,
     )
-    return (resp.choices[0].message.content or "").strip()
 
 
-def why_company(
-    client: OpenAI, model: str, resume: StructuredResume, job: Job, company_blurb: str = ""
-) -> str:
-    prompt = f"""Write a concise, authentic "Why {job.company}?" paragraph (4-6 sentences) for a job application.
-Use the candidate summary and experience themes. Mention alignment with the role if clear.
-
-SUMMARY:
-{resume.summary}
-
-STRUCTURED_RESUME:
-{resume.model_dump_json()}
-
-ROLE: {job.title} at {job.company}
-JOB_DESCRIPTION:
-{job.description}
-
-COMPANY_NOTES (optional):
-{company_blurb or "None provided."}
-"""
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
+def generate_cover_letter(request: DraftRequest) -> str:
+    return generate_with_llm(
+        request,
+        task="Write a focused cover letter under 350 words with strong technical alignment and leadership signal.",
+        fallback=fallback_cover_letter,
     )
-    return (resp.choices[0].message.content or "").strip()
 
 
-def recruiter_outreach(
-    client: OpenAI, model: str, resume: StructuredResume, job: Job
-) -> str:
-    prompt = f"""Write a short LinkedIn-style outreach message to a recruiter or hiring manager (under 120 words).
-Reference the role and 2 concrete strengths from the resume.
+def generate_with_llm(request: DraftRequest, task: str, fallback) -> str:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return fallback(request)
 
-RESUME_SUMMARY: {resume.summary}
-TOP_SKILLS: {", ".join(resume.skills[:12])}
-
-JOB: {job.title} at {job.company}
-"""
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        input=[
+            {
+                "role": "system",
+                "content": "You are an expert technical recruiter and resume strategist for AI, platform, SRE, and engineering leadership roles.",
+            },
+            {
+                "role": "user",
+                "content": build_prompt(request, task),
+            },
+        ],
     )
-    return (resp.choices[0].message.content or "").strip()
+    return response.output_text.strip()
 
 
-def tailored_resume_document(
-    client: OpenAI, model: str, resume: StructuredResume, job: Job
-) -> str:
-    """Returns JSON string: full tailored resume structure for this job."""
-    prompt = f"""Produce an updated resume tailored to this job. Return JSON only with keys:
-summary (string), experience (array of strings), skills (array of strings),
-impact (array of strings), leadership (array of strings).
-Prioritize relevance to the JD; you may reorder or rewrite bullets; keep facts plausible from the source.
+def build_prompt(request: DraftRequest, task: str) -> str:
+    resume = request.resume
+    return f"""
+Task:
+{task}
 
-SOURCE_RESUME_JSON:
-{resume.model_dump_json()}
+Company:
+{request.company or "Unknown"}
 
-JOB:
-{job.title} at {job.company}
-{job.description}
-"""
-    resp = client.chat.completions.create(
-        model=model,
-        response_format={"type": "json_object"},
-        messages=[{"role": "user", "content": prompt}],
+Role:
+{request.role_title or "Unknown"}
+
+Resume Summary:
+{resume.get("summary", "")}
+
+Skills:
+{", ".join(resume.get("skills", []))}
+
+Leadership:
+{chr(10).join(resume.get("leadership", []))}
+
+Impact Metrics:
+{chr(10).join(resume.get("impact_metrics", []))}
+
+Job Description:
+{request.job_description}
+""".strip()
+
+
+def fallback_resume_bullets(request: DraftRequest) -> str:
+    skills = ", ".join(request.resume.get("skills", [])[:6]) or "the required technical skills"
+    return "\n".join(
+        [
+            f"- Built and improved systems aligned with {skills}, emphasizing measurable product and platform impact.",
+            "- Led cross-functional execution across engineering, product, and stakeholder groups to deliver high-quality outcomes.",
+            "- Improved reliability, delivery speed, or operational maturity using pragmatic engineering practices and automation.",
+            "- Translated ambiguous business needs into scalable technical plans, tradeoffs, and implementation milestones.",
+            "- Applied AI/platform engineering practices to increase developer productivity and reduce manual workflow overhead.",
+            "- Drove measurable improvements in performance, cost, quality, or team execution [add verified metric].",
+        ]
     )
-    return resp.choices[0].message.content or "{}"
+
+
+def fallback_why_company(request: DraftRequest) -> str:
+    company = request.company or "your company"
+    role = request.role_title or "this role"
+    return (
+        f"I am interested in {company} because {role} sits at the intersection of technical depth, product impact, "
+        "and scalable execution. My background maps well to teams that need pragmatic engineering leadership, strong "
+        "platform instincts, and the ability to turn ambiguous problems into reliable systems."
+    )
+
+
+def fallback_outreach(request: DraftRequest) -> str:
+    role = request.role_title or "the open role"
+    company = request.company or "your team"
+    return (
+        f"Hi, I am interested in {role} at {company}. My background spans platform engineering, AI-enabled workflows, "
+        "reliability, and technical leadership, and I see a strong fit with the role's needs. I would welcome the chance "
+        "to share how I can help the team deliver durable engineering outcomes."
+    )
+
+
+def fallback_cover_letter(request: DraftRequest) -> str:
+    company = request.company or "your company"
+    role = request.role_title or "this role"
+    return (
+        f"Dear Hiring Team,\n\n"
+        f"I am excited to apply for {role} at {company}. My experience combines hands-on engineering, platform thinking, "
+        "and leadership across ambiguous technical initiatives. I am strongest in environments that require clear system "
+        "design, reliable execution, and practical use of automation or AI to improve team outcomes.\n\n"
+        "The role stood out because it calls for both technical judgment and the ability to create measurable impact. "
+        "I would bring a bias for durable architecture, thoughtful prioritization, and communication that helps teams move "
+        "from strategy to shipped work.\n\n"
+        "Thank you for your consideration."
+    )
